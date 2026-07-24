@@ -24,6 +24,7 @@
   .priority-Medium { background: #fff3cd; color: #8a6d00; }
   .priority-Low { background: #e1f0ff; color: #2166b3; }
   .assignee { font-size: 11px; color: #777; }
+  .tag-chip { display: inline-block; font-size: 10px; background: #e3e6f0; color: #3d4a6b; padding: 2px 6px; border-radius: 8px; margin: 4px 4px 0 0; }
   .edit-btn { float: right; font-size: 11px; background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; }
   .empty-placeholder { font-size: 12px; color: #999; text-align: center; padding: 20px 0; }
   #boardState { padding: 0 24px; font-size: 13px; }
@@ -46,9 +47,13 @@
 <header>
   <div>
     <h1>Task Tracker</h1>
-    <p>Kanban board â€” ToDo / In Progress / Done</p>
+    <p>Kanban board — ToDo / In Progress / Done</p>
   </div>
-  <button id="newTaskBtn">+ New Task</button>
+  <div style="display:flex; gap:10px; align-items:center;">
+    <input type="text" id="searchBox" placeholder="Search title/description..." style="padding:6px 10px; border-radius:6px; border:none; font-size:13px;">
+    <input type="text" id="tagFilter" placeholder="Filter by tag..." style="padding:6px 10px; border-radius:6px; border:none; font-size:13px;">
+    <button id="newTaskBtn">+ New Task</button>
+  </div>
 </header>
 
 <div id="boardState"></div>
@@ -90,6 +95,8 @@
     </select>
     <label>Assignee</label>
     <input type="text" id="fAssignee" placeholder="Unassigned">
+    <label>Tags (comma-separated)</label>
+    <input type="text" id="fTags" placeholder="bug, urgent">
     <div class="form-error" id="formError"></div>
     <div class="modal-actions">
       <button id="cancelBtn">Cancel</button>
@@ -123,10 +130,16 @@ async function fetchTasks() {
   boardEl.style.opacity = "0.5";
   setState("Loading tasks...", false);
   try {
-    const res = await fetch(`${API_BASE}/tasks`);
+    const tagValue = document.getElementById("tagFilter").value.trim();
+    const searchValue = document.getElementById("searchBox").value.trim();
+    const url = new URL(`${API_BASE}/tasks`);
+    if (tagValue) url.searchParams.set("tag", tagValue);
+    if (searchValue) url.searchParams.set("search", searchValue);
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     tasks = await res.json();
-    setState(tasks.length === 0 ? "No tasks yet." : "", false);
+    const hasFilter = tagValue || searchValue;
+    setState(tasks.length === 0 ? (hasFilter ? "No matching tasks." : "No tasks yet.") : "", false);
     renderBoard(tasks);
   } catch (err) {
     setState(`Failed to load tasks (${err.message}). `, true);
@@ -167,12 +180,16 @@ function renderCard(task) {
   card.className = "card";
   card.draggable = true;
   card.dataset.id = task.id;
+  const tagChips = (task.tags && task.tags.length)
+    ? `<div>${task.tags.map(t => `<span class="tag-chip">${escapeHtml(t)}</span>`).join("")}</div>`
+    : "";
   card.innerHTML = `
     <button class="edit-btn" data-id="${task.id}">Edit</button>
     <h3>${escapeHtml(task.title)}</h3>
     ${task.description ? `<p>${escapeHtml(task.description)}</p>` : ""}
     <span class="badge priority-${task.priority}">${task.priority}</span>
     <span class="assignee">${task.assignee ? escapeHtml(task.assignee) : "Unassigned"}</span>
+    ${tagChips}
   `;
 
   card.addEventListener("dragstart", () => card.classList.add("dragging"));
@@ -224,6 +241,7 @@ function openModal(task) {
   document.getElementById("fStatus").value = task ? task.status : "ToDo";
   document.getElementById("fPriority").value = task ? task.priority : "Medium";
   document.getElementById("fAssignee").value = task && task.assignee ? task.assignee : "";
+  document.getElementById("fTags").value = task && task.tags ? task.tags.join(", ") : "";
   document.getElementById("formError").textContent = "";
   overlay.classList.add("open");
 }
@@ -248,13 +266,25 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
     return;
   }
 
+  const originalTask = id ? tasks.find(t => t.id === id) : null;
+  const selectedStatus = document.getElementById("fStatus").value;
+
   const payload = {
     title,
     description: document.getElementById("fDescription").value || "",
-    status: document.getElementById("fStatus").value,
     priority: document.getElementById("fPriority").value,
-    assignee: document.getElementById("fAssignee").value || null
+    assignee: document.getElementById("fAssignee").value || null,
+    tags: document.getElementById("fTags").value
+      .split(",")
+      .map(t => t.trim())
+      .filter(t => t.length > 0)
   };
+
+  // Only include status if it actually changed, to avoid tripping the
+  // "same -> same" transition rule on unrelated edits.
+  if (!originalTask || selectedStatus !== originalTask.status) {
+    payload.status = selectedStatus;
+  }
 
   try {
     const res = id
@@ -283,6 +313,18 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
 });
 
 fetchTasks();
+
+let tagFilterTimeout;
+document.getElementById("tagFilter").addEventListener("input", () => {
+  clearTimeout(tagFilterTimeout);
+  tagFilterTimeout = setTimeout(fetchTasks, 300);
+});
+
+let searchTimeout;
+document.getElementById("searchBox").addEventListener("input", () => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(fetchTasks, 300);
+});
 </script>
 
 </body>

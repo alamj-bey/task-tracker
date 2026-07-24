@@ -89,3 +89,119 @@ def test_delete_existing_returns_204_no_body(client, created_task):
 def test_delete_missing_returns_404(client):
     r = client.delete("/tasks/does-not-exist")
     assert r.status_code == 404
+
+
+def test_create_task_with_tags_returns_201_with_tags(client):
+    r = client.post("/tasks", json={"title": "Tagged task", "tags": ["bug", "urgent"]})
+    assert r.status_code == 201
+    assert sorted(r.json()["tags"]) == ["bug", "urgent"]
+
+
+def test_create_task_rejects_blank_tag_422(client):
+    r = client.post("/tasks", json={"title": "Bad tags", "tags": ["ok", "   "]})
+    assert r.status_code == 422
+
+
+def test_create_task_rejects_too_many_tags_422(client):
+    r = client.post("/tasks", json={"title": "Too many", "tags": ["a", "b", "c", "d", "e", "f"]})
+    assert r.status_code == 422
+
+
+def test_update_task_tags_replaces_list(client, created_task):
+    r = client.patch(f"/tasks/{created_task['id']}", json={"tags": ["backend"]})
+    assert r.status_code == 200
+    assert r.json()["tags"] == ["backend"]
+
+
+def test_update_task_tags_preserves_other_fields(client, created_task):
+    r = client.patch(f"/tasks/{created_task['id']}", json={"tags": ["frontend"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["title"] == created_task["title"]
+    assert body["tags"] == ["frontend"]
+
+
+def test_filter_tasks_by_tag_returns_only_matches(client):
+    client.post("/tasks", json={"title": "A", "tags": ["bug"]})
+    client.post("/tasks", json={"title": "B", "tags": ["feature"]})
+    r = client.get("/tasks", params={"tag": "bug"})
+    assert r.status_code == 200
+    titles = [t["title"] for t in r.json()]
+    assert titles == ["A"]
+
+
+def test_filter_tasks_by_tag_no_match_returns_200_empty_list(client, created_task):
+    r = client.get("/tasks", params={"tag": "nonexistent"})
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_filter_tasks_by_tag_case_insensitive(client):
+    client.post("/tasks", json={"title": "A", "tags": ["Bug"]})
+    r = client.get("/tasks", params={"tag": "bug"})
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+
+
+def test_filter_tasks_by_tag_partial_match(client):
+    client.post("/tasks", json={"title": "A", "tags": ["docs"]})
+    r = client.get("/tasks", params={"tag": "doc"})
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+
+
+def test_search_matches_title_case_insensitive(client):
+    client.post("/tasks", json={"title": "Fix login bug"})
+    client.post("/tasks", json={"title": "Write docs"})
+    r = client.get("/tasks", params={"search": "LOGIN"})
+    assert r.status_code == 200
+    titles = [t["title"] for t in r.json()]
+    assert titles == ["Fix login bug"]
+
+
+def test_search_matches_description(client):
+    client.post("/tasks", json={"title": "Task A", "description": "involves the payment gateway"})
+    client.post("/tasks", json={"title": "Task B", "description": "unrelated"})
+    r = client.get("/tasks", params={"search": "payment"})
+    assert r.status_code == 200
+    titles = [t["title"] for t in r.json()]
+    assert titles == ["Task A"]
+
+
+def test_search_no_match_returns_200_empty_list(client, created_task):
+    r = client.get("/tasks", params={"search": "zzz_no_match"})
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_search_combined_with_status_and_priority(client):
+    client.post("/tasks", json={"title": "Login fix", "priority": "High"})
+    client.post("/tasks", json={"title": "Login docs", "priority": "Low"})
+    r = client.get("/tasks", params={"search": "login", "priority": "High"})
+    assert r.status_code == 200
+    titles = [t["title"] for t in r.json()]
+    assert titles == ["Login fix"]
+
+
+def test_search_combined_with_tag_filter(client):
+    client.post("/tasks", json={"title": "Login fix", "tags": ["bug"]})
+    client.post("/tasks", json={"title": "Login docs", "tags": ["docs"]})
+    r = client.get("/tasks", params={"search": "login", "tag": "bug"})
+    assert r.status_code == 200
+    titles = [t["title"] for t in r.json()]
+    assert titles == ["Login fix"]
+
+
+def test_invalid_status_filter_returns_422(client):
+    r = client.get("/tasks", params={"status": "NotARealStatus"})
+    assert r.status_code == 422
+
+
+def test_combined_filters_use_and_logic_not_or(client):
+    client.post("/tasks", json={"title": "Match all", "priority": "High", "tags": ["bug"]})
+    client.post("/tasks", json={"title": "Only priority matches", "priority": "High", "tags": ["docs"]})
+    client.post("/tasks", json={"title": "Only tag matches", "priority": "Low", "tags": ["bug"]})
+    r = client.get("/tasks", params={"priority": "High", "tag": "bug"})
+    assert r.status_code == 200
+    titles = [t["title"] for t in r.json()]
+    assert titles == ["Match all"]

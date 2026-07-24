@@ -33,8 +33,10 @@ def create_task(payload: TaskCreate) -> TaskResponse:
 def list_tasks(
     status: Optional[TaskStatus] = None,
     priority: Optional[TaskPriority] = None,
+    tag: Optional[str] = None,
+    search: Optional[str] = None,
 ) -> list[TaskResponse]:
-    return storage.get_all_tasks(status=status, priority=priority)
+    return storage.get_all_tasks(status=status, priority=priority, tag=tag, search=search)
 
 
 @app.get("/tasks/{task_id}", response_model=TaskResponse, tags=["tasks"])
