@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Task Tracker</title>
+<style>
+  :root { --gap: 12px; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1a1a1a; }
+  header { padding: 16px 24px; background: #1a2b4c; color: white; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 2px 0 0; font-size: 13px; color: #c9d2e8; }
+  #newTaskBtn { background: #3d63dd; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  #board { display: flex; gap: var(--gap); padding: 20px; align-items: flex-start; }
+  .column { flex: 1; background: #ebecf0; border-radius: 8px; padding: 10px; min-height: 200px; }
+  .column h2 { font-size: 14px; margin: 4px 6px 10px; display: flex; justify-content: space-between; }
+  .column .count { color: #6b6f76; font-weight: normal; }
+  .card { background: white; border-radius: 6px; padding: 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.15); cursor: grab; }
+  .card.dragging { opacity: 0.4; }
+  .card h3 { margin: 0 0 4px; font-size: 14px; }
+  .card p { margin: 0 0 6px; font-size: 12px; color: #555; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 6px; border-radius: 10px; margin-right: 4px; }
+  .priority-High { background: #ffe1e1; color: #c0392b; }
+  .priority-Medium { background: #fff3cd; color: #8a6d00; }
+  .priority-Low { background: #e1f0ff; color: #2166b3; }
+  .assignee { font-size: 11px; color: #777; }
+  .edit-btn { float: right; font-size: 11px; background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; }
+  .empty-placeholder { font-size: 12px; color: #999; text-align: center; padding: 20px 0; }
+  #boardState { padding: 0 24px; font-size: 13px; }
+  #boardState.error { color: #c0392b; }
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: white; padding: 20px; border-radius: 8px; width: 360px; max-width: 90%; }
+  .modal h2 { margin-top: 0; font-size: 16px; }
+  .modal label { display: block; font-size: 12px; margin: 10px 0 4px; }
+  .modal input, .modal select, .modal textarea { width: 100%; padding: 6px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; }
+  .modal-actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px; }
+  .modal-actions button { padding: 6px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; }
+  #saveBtn { background: #3d63dd; color: white; }
+  #cancelBtn { background: #eee; }
+  .form-error { color: #c0392b; font-size: 12px; margin-top: 8px; min-height: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Task Tracker</h1>
+    <p>Kanban board — ToDo / In Progress / Done</p>
+  </div>
+  <button id="newTaskBtn">+ New Task</button>
+</header>
+
+<div id="boardState"></div>
+
+<div id="board">
+  <div class="column" data-status="ToDo">
+    <h2>To Do <span class="count" id="count-ToDo">0</span></h2>
+    <div class="cards" id="cards-ToDo"></div>
+  </div>
+  <div class="column" data-status="InProgress">
+    <h2>In Progress <span class="count" id="count-InProgress">0</span></h2>
+    <div class="cards" id="cards-InProgress"></div>
+  </div>
+  <div class="column" data-status="Done">
+    <h2>Done <span class="count" id="count-Done">0</span></h2>
+    <div class="cards" id="cards-Done"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <h2 id="modalTitle">New Task</h2>
+    <input type="hidden" id="taskId">
+    <label>Title</label>
+    <input type="text" id="fTitle">
+    <label>Description</label>
+    <textarea id="fDescription" rows="2"></textarea>
+    <label>Status</label>
+    <select id="fStatus">
+      <option value="ToDo">ToDo</option>
+      <option value="InProgress">InProgress</option>
+      <option value="Done">Done</option>
+    </select>
+    <label>Priority</label>
+    <select id="fPriority">
+      <option value="Low">Low</option>
+      <option value="Medium" selected>Medium</option>
+      <option value="High">High</option>
+    </select>
+    <label>Assignee</label>
+    <input type="text" id="fAssignee" placeholder="Unassigned">
+    <div class="form-error" id="formError"></div>
+    <div class="modal-actions">
+      <button id="cancelBtn">Cancel</button>
+      <button id="saveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE = "http://localhost:8000";
+const STATUSES = ["ToDo", "InProgress", "Done"];
+const PRIORITY_ORDER = { High: 0, Medium: 1, Low: 2 };
+let tasks = [];
+
+const boardEl = document.getElementById("board");
+const stateEl = document.getElementById("boardState");
+const overlay = document.getElementById("modalOverlay");
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str ?? "";
+  return div.innerHTML;
+}
+
+function setState(msg, isError) {
+  stateEl.textContent = msg || "";
+  stateEl.className = isError ? "error" : "";
+}
+
+async function fetchTasks() {
+  boardEl.style.opacity = "0.5";
+  setState("Loading tasks...", false);
+  try {
+    const res = await fetch(`${API_BASE}/tasks`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    tasks = await res.json();
+    setState(tasks.length === 0 ? "No tasks yet." : "", false);
+    renderBoard(tasks);
+  } catch (err) {
+    setState(`Failed to load tasks (${err.message}). `, true);
+    const retry = document.createElement("button");
+    retry.textContent = "Retry";
+    retry.onclick = fetchTasks;
+    stateEl.appendChild(retry);
+    renderBoard([]);
+  } finally {
+    boardEl.style.opacity = "1";
+  }
+}
+
+function renderBoard(list) {
+  STATUSES.forEach(status => {
+    const container = document.getElementById(`cards-${status}`);
+    container.innerHTML = "";
+    const inColumn = list
+      .filter(t => t.status === status)
+      .sort((a, b) => (PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]) || (a.id < b.id ? -1 : 1));
+
+    document.getElementById(`count-${status}`).textContent = inColumn.length;
+
+    if (inColumn.length === 0) {
+      const placeholder = document.createElement("div");
+      placeholder.className = "empty-placeholder";
+      placeholder.textContent = "No tasks";
+      container.appendChild(placeholder);
+      return;
+    }
+
+    inColumn.forEach(task => container.appendChild(renderCard(task)));
+  });
+}
+
+function renderCard(task) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.draggable = true;
+  card.dataset.id = task.id;
+  card.innerHTML = `
+    <button class="edit-btn" data-id="${task.id}">Edit</button>
+    <h3>${escapeHtml(task.title)}</h3>
+    ${task.description ? `<p>${escapeHtml(task.description)}</p>` : ""}
+    <span class="badge priority-${task.priority}">${task.priority}</span>
+    <span class="assignee">${task.assignee ? escapeHtml(task.assignee) : "Unassigned"}</span>
+  `;
+
+  card.addEventListener("dragstart", () => card.classList.add("dragging"));
+  card.addEventListener("dragend", () => card.classList.remove("dragging"));
+  card.querySelector(".edit-btn").addEventListener("click", () => openModal(task));
+
+  return card;
+}
+
+document.querySelectorAll(".column").forEach(col => {
+  col.addEventListener("dragover", e => e.preventDefault());
+  col.addEventListener("drop", async e => {
+    e.preventDefault();
+    const dragging = document.querySelector(".dragging");
+    if (!dragging) return;
+    const taskId = dragging.dataset.id;
+    const newStatus = col.dataset.status;
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || task.status === newStatus) return;
+
+    const previousStatus = task.status;
+    task.status = newStatus;
+    renderBoard(tasks);
+
+    try {
+      const res = await fetch(`${API_BASE}/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      task.status = previousStatus;
+      renderBoard(tasks);
+      setState(`Move rejected: ${err.message}`, true);
+    }
+  });
+});
+
+// ---- Modal ----
+function openModal(task) {
+  document.getElementById("modalTitle").textContent = task ? "Edit Task" : "New Task";
+  document.getElementById("taskId").value = task ? task.id : "";
+  document.getElementById("fTitle").value = task ? task.title : "";
+  document.getElementById("fDescription").value = task ? task.description : "";
+  document.getElementById("fStatus").value = task ? task.status : "ToDo";
+  document.getElementById("fPriority").value = task ? task.priority : "Medium";
+  document.getElementById("fAssignee").value = task && task.assignee ? task.assignee : "";
+  document.getElementById("formError").textContent = "";
+  overlay.classList.add("open");
+}
+
+function closeModal() {
+  overlay.classList.remove("open");
+  document.getElementById("formError").textContent = "";
+}
+
+document.getElementById("newTaskBtn").addEventListener("click", () => openModal(null));
+document.getElementById("cancelBtn").addEventListener("click", closeModal);
+overlay.addEventListener("click", e => { if (e.target === overlay) closeModal(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && overlay.classList.contains("open")) closeModal(); });
+
+document.getElementById("saveBtn").addEventListener("click", async () => {
+  const id = document.getElementById("taskId").value;
+  const title = document.getElementById("fTitle").value.trim();
+  const errorEl = document.getElementById("formError");
+
+  if (!title) {
+    errorEl.textContent = "Title is required";
+    return;
+  }
+
+  const payload = {
+    title,
+    description: document.getElementById("fDescription").value || "",
+    status: document.getElementById("fStatus").value,
+    priority: document.getElementById("fPriority").value,
+    assignee: document.getElementById("fAssignee").value || null
+  };
+
+  try {
+    const res = id
+      ? await fetch(`${API_BASE}/tasks/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        })
+      : await fetch(`${API_BASE}/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      errorEl.textContent = typeof body.detail === "string" ? body.detail : "Server rejected this task.";
+      return;
+    }
+
+    closeModal();
+    fetchTasks();
+  } catch (err) {
+    errorEl.textContent = `Network error: ${err.message}`;
+  }
+});
+
+fetchTasks();
+</script>
+
+</body>
+</html>
