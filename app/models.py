@@ -84,8 +84,17 @@ class TaskUpdate(BaseModel):
 
     @field_validator("title")
     @classmethod
-    def validate_title(cls, v: Optional[str]) -> Optional[str]:
+    def validate_title(cls, v: Optional[str]) -> str:
+        if v is None:
+            raise ValueError("Title cannot be explicitly set to null")
         return _clean_title(v)
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: Optional[TaskStatus]) -> TaskStatus:
+        if v is None:
+            raise ValueError("Status cannot be explicitly set to null")
+        return v
 
     @field_validator("tags")
     @classmethod
