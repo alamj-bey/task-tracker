@@ -71,3 +71,14 @@
 **Fix:** changed the tag filter to `any(tag_lower in x.lower() for x in t.tags)` — a partial, case-insensitive substring check, matching Search's behavior. Added `test_filter_tasks_by_tag_partial_match` and proved it with a Break Test.
 
 **Accepted / edited / rejected:** this is a case where the original AI output was technically correct against the prompt as written, but the prompt itself under-specified the desired behavior — corrected after manual testing revealed the inconsistency. Recorded in `mini-adr.md`, decision #4.
+
+---
+
+## Debugging entry: explicit null accepted for title/status on PATCH
+**What was observed:** sending `PATCH /tasks/{id}` with `{"title": null}` returned 200, and the task's title was silently overwritten to `None` — despite the "title is required" rule being enforced everywhere else.
+
+**Diagnosis:** `TaskUpdate.title` and `.status` are `Optional` (required, so clients can omit a field to leave it unchanged), but the validators only guarded against *provided-but-blank* values, not *provided-as-null*. Pydantic's `model_dump(exclude_unset=True)` treats an explicit `null` as "set," so it passed straight through to `model_copy(update=...)`, which doesn't re-validate types on write.
+
+**Fix:** updated both validators to explicitly reject `None`, relying on Pydantic only invoking a field's validator when that field is actually present in the request (an omitted field never triggers it) — so "omitted" and "explicit null" stay distinguishable and behave correctly.
+
+**Accepted / edited / rejected:** this was a self-found gap, not something an AI prompt introduced directly — the original T1 prompt didn't specify this edge case, so the resulting validator only handled the cases it was explicitly told to check. Found via direct `Invoke-RestMethod`/API testing rather than the existing pytest suite, which is itself worth noting: automated tests only catch what they were written to catch.
