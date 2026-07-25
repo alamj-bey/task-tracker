@@ -64,6 +64,22 @@ def test_patch_not_found_returns_404(client):
     assert r.status_code == 404
 
 
+def test_patch_explicit_null_title_rejected_422(client, created_task):
+    r = client.patch(f"/tasks/{created_task['id']}", json={"title": None})
+    assert r.status_code == 422
+
+
+def test_patch_explicit_null_status_rejected_422(client, created_task):
+    r = client.patch(f"/tasks/{created_task['id']}", json={"status": None})
+    assert r.status_code == 422
+
+
+def test_patch_omitted_title_leaves_it_unchanged(client, created_task):
+    r = client.patch(f"/tasks/{created_task['id']}", json={"assignee": "Sam"})
+    assert r.status_code == 200
+    assert r.json()["title"] == created_task["title"]
+
+
 def test_patch_valid_transition_todo_to_inprogress_returns_200(client, created_task):
     r = client.patch(f"/tasks/{created_task['id']}", json={"status": "InProgress"})
     assert r.status_code == 200
